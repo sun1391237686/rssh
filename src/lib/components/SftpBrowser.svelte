@@ -4,6 +4,7 @@
     import * as app from "../stores/app.svelte.ts";
     import * as transfers from "../stores/transfers.svelte.ts";
     import type {RemoteEntry} from "../stores/app.svelte.ts";
+    import { shouldClearQueuedNotice, type SftpNoticeKind } from "./sftpNotice";
     import { errMsg, t } from "../i18n/index.svelte.ts";
 
     /** Mirrors the backend WalkEntry; rel_path is always '/'-separated. */
@@ -19,6 +20,8 @@
     let loading = $state(true);
     let error = $state("");
     let notice = $state("");
+    let noticeKind = $state<SftpNoticeKind>(null);
+    let noticeCount = $state(0);
 
     /** Names of selected entries in the current directory. Cleared on
      *  directory change — selections do not persist across directories. */
@@ -28,11 +31,12 @@
     let uploadWrapEl: HTMLDivElement | undefined;
     /** "Select all" checkbox — bound so we can drive `indeterminate` from an
      *  effect; the attribute form does not reliably sync the DOM property. */
-    let selectAllEl: HTMLInputElement | undefined;
+    let selectAllEl = $state<HTMLInputElement | undefined>(undefined);
 
     const selectedCount = $derived(selected.size);
     const allSelected = $derived(entries.length > 0 && selected.size === entries.length);
     const someSelected = $derived(selected.size > 0 && selected.size < entries.length);
+    const activeTransferCount = $derived(transfers.activeCount());
 
     onMount(async () => {
         try {
@@ -199,9 +203,19 @@
         if (selectAllEl) selectAllEl.indeterminate = someSelected;
     });
 
+    $effect(() => {
+        if (shouldClearQueuedNotice(noticeKind, activeTransferCount)) {
+            notice = "";
+            noticeKind = null;
+            noticeCount = 0;
+        }
+    });
+
     async function downloadSelected() {
         error = "";
         notice = "";
+        noticeKind = null;
+        noticeCount = 0;
         if (!meta.sessionId) { error = "Missing SSH session"; return; }
         if (selected.size === 0) return;
         const items = entries.filter(e => selected.has(e.name));
@@ -245,7 +259,11 @@
                 }
             }
             if (walkErrors.length > 0) error = `${t("sftp.walk_failed")}\n${walkErrors.join("\n")}`;
-            if (queued > 0) notice = t("sftp.queued_n", { n: queued });
+            if (queued > 0) {
+                noticeKind = "queued";
+                noticeCount = queued;
+                notice = t("sftp.queued_n", { n: queued });
+            }
             selected = new Set();
         } catch (err: any) {
             error = errMsg(err);
@@ -255,6 +273,8 @@
     async function uploadFiles() {
         error = "";
         notice = "";
+        noticeKind = null;
+        noticeCount = 0;
         if (!meta.sessionId) { error = "Missing SSH session"; return; }
         try {
             const paths = await invoke<string[] | null>("sftp_pick_open_files");
@@ -267,6 +287,8 @@
                     remotePath: joinRemote(cwd, name),
                 });
             }
+            noticeKind = "queued";
+            noticeCount = paths.length;
             notice = t("sftp.queued_n", { n: paths.length });
         } catch (err: any) {
             error = errMsg(err);
@@ -276,12 +298,18 @@
     async function uploadFolder() {
         error = "";
         notice = "";
+        noticeKind = null;
+        noticeCount = 0;
         if (!meta.sessionId) { error = "Missing SSH session"; return; }
         try {
             const dir = await invoke<string | null>("sftp_pick_folder");
             if (!dir) return;
             const walked = await invoke<WalkEntry[]>("walk_local_dir", { localRoot: dir });
-            if (walked.length === 0) { notice = t("sftp.folder_empty"); return; }
+            if (walked.length === 0) {
+                noticeKind = "folder_empty";
+                notice = t("sftp.folder_empty");
+                return;
+            }
             const folderName = basename(dir);
             for (const w of walked) {
                 await transfers.startUpload({
@@ -290,6 +318,8 @@
                     remotePath: joinRemote(cwd, folderName, w.rel_path),
                 });
             }
+            noticeKind = "queued";
+            noticeCount = walked.length;
             notice = t("sftp.queued_n", { n: walked.length });
         } catch (err: any) {
             error = errMsg(err);
