@@ -38,6 +38,14 @@
     const someSelected = $derived(selected.size > 0 && selected.size < entries.length);
     const activeTransferCount = $derived(transfers.activeCount());
 
+    $effect(() => {
+        if (!meta.tabId || !app.sftpFollowCwd()) return;
+        const target = app.remoteCwdForTab(meta.tabId);
+        if (!target || target === cwd) return;
+        if (!sftpId) return;
+        void listDir(target);
+    });
+
     onMount(async () => {
         try {
             let id: string;

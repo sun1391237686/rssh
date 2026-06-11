@@ -17,6 +17,7 @@
   let connectTimeout = $state(10);
   let commandBlockBar = $state(true);
   let copyOnSelect = $state(false);
+  let sftpFollowCwd = $state(false);
   let rightClickAction = $state<app.RightClickAction>("menu");
   let rightClickOptions = $derived([
     { value: "menu", label: t("settings.shell.right_click_menu") },
@@ -43,6 +44,7 @@
     if (ts) connectTimeout = parseInt(ts, 10) || 10;
     commandBlockBar = await app.loadCommandBlockBar();
     copyOnSelect = await app.loadCopyOnSelect();
+    sftpFollowCwd = await app.loadSftpFollowCwd();
     rightClickAction = await app.loadRightClickAction();
     // SFTP 并发上限：main.ts 启动时已读过持久值进 store，但用户可能在打开 Settings 前
     // 还没 await 完。再读一次确保 input 显示真实当前值。
@@ -98,6 +100,10 @@
 
   async function saveCopyOnSelect() {
     await app.setCopyOnSelect(copyOnSelect);
+  }
+
+  async function saveSftpFollowCwd() {
+    await app.setSftpFollowCwd(sftpFollowCwd);
   }
 
   function saveRightClickAction(v: app.RightClickAction) {
@@ -171,6 +177,18 @@
     <span class="timeout-hint">{t("settings.shell.sftp_concurrent_hint", {
       min: sftpBounds.min, max: sftpBounds.max, def: sftpBounds.def,
     })}</span>
+  </div>
+
+  <div class="section-label">{t("settings.shell.sftp_browser")}</div>
+  <div class="switch-card">
+    <div class="switch-card-body">
+      <div class="switch-card-title" class:on={sftpFollowCwd} class:off={!sftpFollowCwd}>{t("settings.shell.sftp_follow_cwd")}</div>
+      <div class="switch-card-desc">{t("settings.shell.sftp_follow_cwd_desc")}</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" bind:checked={sftpFollowCwd} onchange={saveSftpFollowCwd} />
+      <span class="slider"></span>
+    </label>
   </div>
 
   <div class="section-label">{t("settings.shell.connection_logging")}</div>

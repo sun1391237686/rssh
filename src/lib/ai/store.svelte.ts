@@ -48,6 +48,7 @@ let _chatByTab = $state<Record<string, ChatItem[]>>({});
 let _pendingByTab = $state<Record<string, CommandProposed | null>>({});
 let _keyboardLockedByTab = $state<Record<string, boolean>>({});
 let _settings = $state<AiSettings | null>(null);
+let _remoteShellByTarget = $state<Record<string, ShellKind>>({});
 /**
  * tab_id → 终端类型映射。internal_command 自动执行时需要知道走 ssh_write
  * 还是 pty_write —— ChatPanel 把 targetKind 作为 prop 传给 dialog，但 store
@@ -96,6 +97,9 @@ export function pendingCommand(tab_id: string): CommandProposed | null {
 export function isKeyboardLocked(tab_id: string): boolean {
   return _keyboardLockedByTab[tab_id] === true;
 }
+export function remoteShellKind(targetId: string): ShellKind | null {
+  return _remoteShellByTarget[targetId] ?? null;
+}
 
 function pushChat(tab_id: string, item: ChatItem) {
   const arr = _chatByTab[tab_id] ?? [];
@@ -131,6 +135,7 @@ export async function startSession(args: {
 }
 
 export async function stopSession(tab_id: string) {
+  const targetId = _sessionByTab[tab_id]?.target_id;
   // Tear down in-flight executions for this tab FIRST. Without this,
   // the PTY data listener + 60s setTimeout linger after the session is
   // gone, the buffer keeps appending against a defunct session, and the
@@ -152,6 +157,11 @@ export async function stopSession(tab_id: string) {
   delete _keyboardLockedByTab[tab_id];
   delete _targetKindByTab[tab_id];
   delete _chatByTab[tab_id];
+  if (targetId) {
+    const nextShells = { ..._remoteShellByTarget };
+    delete nextShells[targetId];
+    _remoteShellByTarget = nextShells;
+  }
   if (_activeTabId === tab_id) _activeTabId = null;
 }
 
@@ -242,6 +252,7 @@ export async function probeRemoteShell(target_id: string): Promise<boolean> {
     while (Date.now() < deadline) {
       const { kind } = classifyProbeBuffer(buffer);
       if (kind) {
+        _remoteShellByTarget[target_id] = kind;
         await cache(kind); // posix/powershell 的求值行无歧义，立即定夺
         return true;
       }
@@ -250,6 +261,7 @@ export async function probeRemoteShell(target_id: string): Promise<boolean> {
     // 超时：没等到 posix/powershell 求值行。若 buffer 里有（非回显的）cmd 求值签名 → 真 cmd.exe；
     // 慢链路下求值行整个没到（只有被 lookbehind 排除的回显）→ cmd=false → 不写缓存，POSIX 兜底。
     if (classifyProbeBuffer(buffer).cmd) {
+      _remoteShellByTarget[target_id] = "cmd";
       await cache("cmd");
       return true;
     }

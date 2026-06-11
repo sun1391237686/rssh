@@ -148,6 +148,11 @@ let _pinnedProfileIds = $state<string[]>(loadStringArray("pinned_profiles"));
 
 /* Terminal title (from remote shell OSC sequence), separate from tab label */
 let _terminalTitles = $state<Record<string, string>>({});
+/* SFTP browser follow-current-directory setting (persisted). */
+let _sftpFollowCwd = $state(false);
+let _sftpFollowCwdLoaded = false;
+/* Tab id -> latest cwd reported by the terminal for that tab. */
+let _remoteCwdByTab = $state<Record<string, string>>({});
 
 /* ─── Getters ─── */
 export function tabs() { return _tabs; }
@@ -166,6 +171,8 @@ export function tabsWithSftp(): Tab[] { return _tabs.filter(t => _sftpOpenByTab[
 export function downloadsActive() { return _downloadsActive; }
 export function pinnedProfileIds() { return _pinnedProfileIds; }
 export function terminalTitle(tabId: string) { return _terminalTitles[tabId]; }
+export function sftpFollowCwd() { return _sftpFollowCwd; }
+export function remoteCwdForTab(tabId: string) { return _remoteCwdByTab[tabId] ?? ""; }
 
 /* ─── Tab Operations ─── */
 export function setActiveTab(id: string) {
@@ -196,6 +203,11 @@ export function closeTab(id: string) {
   const wasActive = _activeTabId === id;
   _tabs.splice(idx, 1);
   delete _terminalTitles[id];
+  if (_remoteCwdByTab[id]) {
+    const next = { ..._remoteCwdByTab };
+    delete next[id];
+    _remoteCwdByTab = next;
+  }
   // tab 自身没了，对应的 SFTP 实例也得 unmount —— 删 map entry 让 {#each} 收掉
   if (_sftpOpenByTab[id]) {
     const next = { ..._sftpOpenByTab };
@@ -220,6 +232,18 @@ export function updateTabLabel(id: string, label: string) {
 
 export function setTerminalTitle(tabId: string, title: string) {
   _terminalTitles[tabId] = title;
+}
+
+export function setRemoteCwd(tabId: string, cwd: string) {
+  if (!cwd) return;
+  _remoteCwdByTab = { ..._remoteCwdByTab, [tabId]: cwd };
+}
+
+export function clearRemoteCwd(tabId: string) {
+  if (!_remoteCwdByTab[tabId]) return;
+  const next = { ..._remoteCwdByTab };
+  delete next[tabId];
+  _remoteCwdByTab = next;
 }
 
 /* ─── Settings Navigation ─── */
@@ -474,6 +498,23 @@ export async function setCommandBlockBar(v: boolean) {
   _commandBlockBar = v;
   _cbbLoaded = true;
   await invoke("set_setting", { key: "command_block_bar", value: String(v) });
+}
+
+/* ─── SFTP follow current directory ─── */
+export async function loadSftpFollowCwd(): Promise<boolean> {
+  if (!_sftpFollowCwdLoaded) {
+    _sftpFollowCwdLoaded = true;
+    try {
+      const v = await invoke<string | null>("get_setting", { key: "sftp_follow_cwd" });
+      _sftpFollowCwd = v === "true";
+    } catch {}
+  }
+  return _sftpFollowCwd;
+}
+export async function setSftpFollowCwd(v: boolean) {
+  _sftpFollowCwd = v;
+  _sftpFollowCwdLoaded = true;
+  await invoke("set_setting", { key: "sftp_follow_cwd", value: String(v) });
 }
 
 /* ─── Copy selected terminal text on selection ─── */

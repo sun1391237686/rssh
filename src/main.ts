@@ -23,6 +23,7 @@ void transfers.loadMaxConcurrent();
 // waiting for the Settings screen. fire-and-forget like loadMaxConcurrent.
 void app.loadCopyOnSelect();
 void app.loadRightClickAction();
+void app.loadSftpFollowCwd();
 
 const instance = mount(App, { target: document.getElementById("app")! });
 

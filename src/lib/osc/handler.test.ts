@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 vi.mock("../stores/app.svelte.ts", () => ({
   addTab: vi.fn(),
+  setRemoteCwd: vi.fn(),
 }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -24,7 +25,7 @@ function setup() {
   });
   const parser = { registerOscHandler };
   const reporter = { error: vi.fn() };
-  registerRsshOscHandlers(parser, reporter);
+  registerRsshOscHandlers(parser, reporter, { tabId: "tab-1" });
   if (!captured) throw new Error("OSC 7337 handler not registered");
   // captured 在 vi.fn callback 内被赋值，TS 流分析不追踪闭包写入——
   // 这里运行期已通过 null 检查，显式 cast 以让 dispatch 类型可调用。
@@ -219,5 +220,16 @@ describe("fwd: handler", () => {
     await flush();
     const meta = (app.addTab as any).mock.calls[0][0].meta;
     expect(meta.profileName).toBe("?");
+  });
+});
+
+describe("cwd: handler", () => {
+  it("stores remote cwd for the active tab", async () => {
+    const { dispatch } = setup();
+
+    expect(dispatch("cwd:/root/projects")).toBe(true);
+    await flush();
+
+    expect(app.setRemoteCwd).toHaveBeenCalledWith("tab-1", "/root/projects");
   });
 });

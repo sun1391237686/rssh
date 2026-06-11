@@ -8,6 +8,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import * as app from "../stores/app.svelte.ts";
+import { parseRemoteCwdPayload } from "../terminal/cwd-follow.ts";
 
 const OSC_RSSH_ID = 7337;
 
@@ -16,11 +17,13 @@ export interface OscReporter {
   error(message: string): void;
 }
 
-type OscHandler = (name: string, ctx: OscReporter) => Promise<void> | void;
+type OscHandler = (name: string, ctx: OscReporter, oscCtx?: OscContext) => Promise<void> | void;
+type OscContext = { tabId?: string };
 
 const HANDLERS: Record<string, OscHandler> = {
   open: openProfile,
   fwd: openForward,
+  cwd: updateRemoteCwd,
 };
 
 async function openProfile(name: string, ctx: OscReporter) {
@@ -67,13 +70,21 @@ async function openForward(name: string, ctx: OscReporter) {
   });
 }
 
+async function updateRemoteCwd(name: string, ctx: OscReporter, oscCtx?: OscContext) {
+  const tabId = oscCtx?.tabId;
+  if (!tabId) return;
+  const cwd = parseRemoteCwdPayload(name);
+  if (!cwd) return;
+  app.setRemoteCwd(tabId, cwd);
+}
+
 /** xterm.js Terminal.parser shape we depend on. */
 export interface OscParser {
   registerOscHandler(id: number, handler: (data: string) => boolean): void;
 }
 
 /** Hook the rssh OSC sequences into a terminal's OSC parser. */
-export function registerRsshOscHandlers(parser: OscParser, reporter: OscReporter): void {
+export function registerRsshOscHandlers(parser: OscParser, reporter: OscReporter, oscCtx?: OscContext): void {
   parser.registerOscHandler(OSC_RSSH_ID, (data: string) => {
     const sep = data.indexOf(":");
     if (sep < 0) return false;
@@ -81,7 +92,7 @@ export function registerRsshOscHandlers(parser: OscParser, reporter: OscReporter
     const name = data.slice(sep + 1);
     const handler = HANDLERS[kind];
     if (!handler) return false;
-    void handler(name, reporter);
+    void handler(name, reporter, oscCtx);
     return true;
   });
 }

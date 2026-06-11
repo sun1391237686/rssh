@@ -951,7 +951,7 @@
                      title={t("common.resize_hint")}></div>
                 {#each sftpTabs as tab (tab.id)}
                     <div class="sftp-pane" class:visible={tab.id === app.activeTabId() && sftpVisible}>
-                        <SftpBrowser meta={{...tab.meta ?? {}, sessionId: app.sessionIdForTab(tab.id) ?? ''}}/>
+                        <SftpBrowser meta={{...tab.meta ?? {}, sessionId: app.sessionIdForTab(tab.id) ?? '', tabId: tab.id }}/>
                     </div>
                 {/each}
             </aside>
