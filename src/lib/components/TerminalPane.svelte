@@ -14,7 +14,7 @@
     import * as theme from "../themes/store.svelte.ts";
     import MobileKeybar from "./MobileKeybar.svelte";
     import {registerRsshOscHandlers} from "../osc/handler.ts";
-    import {buildRemoteCwdHook} from "../terminal/cwd-follow.ts";
+    import {createCwdSync} from "../terminal/cwd-sync.ts";
     import {createCommandBlockTracker, type CommandBlock, type CommandBlockTracker} from "../terminal/command-blocks.ts";
     import {createFoldStore, type FoldStore} from "../terminal/folds.ts";
     import {extractBlocksText} from "../terminal/block-content.ts";
@@ -196,7 +196,9 @@
     let disconnected = $state(false);
     let showSearch = $state(false);
     let searchQuery = $state("");
-    let cwdHookInstalledFor = $state<string | null>(null);
+
+    // 目录同步器实例（仅 SSH 会话）
+    let cwdSync: ReturnType<typeof createCwdSync> | undefined;
 
     // Command block overlay state. `paintTick` is a dumb counter we bump
     // whenever something that affects the overlay changes — scroll, render,
@@ -622,15 +624,6 @@
         if (sel) app.writeClipboard(sel);
     }
 
-    async function installRemoteCwdHook(session_id: string) {
-        const kind = ai.remoteShellKind(session_id);
-        if (!kind || cwdHookInstalledFor === session_id || !app.sftpFollowCwd()) return;
-        const script = buildRemoteCwdHook(kind);
-        if (!script) return;
-        cwdHookInstalledFor = session_id;
-        await invoke(writeCmd, { sessionId: session_id, data: Array.from(new TextEncoder().encode(`${script}\r`)) }).catch(() => {});
-    }
-
     /** Copy-on-select: fires on a real left-button mouse release on the terminal
      *  host — covers drag, double- and triple-click. Bound to mouseup (NOT
      *  terminal.onSelectionChange) so programmatic selections never hit the
@@ -705,8 +698,17 @@
                 terminal.write(hlRegex ? applyHighlights(text) : text);
                 return;
             }
+
+            // 解码输出文本
+            const text = decoder.decode(raw, { stream: true });
+
+            // 目录同步器处理输出
+            if (cwdSync && isSsh) {
+                cwdSync.handleOutput(text);
+            }
+
             if (hlRegex) {
-                terminal.write(applyHighlights(decoder.decode(raw, { stream: true })));
+                terminal.write(applyHighlights(text));
             } else {
                 terminal.write(raw);
             }
@@ -732,6 +734,12 @@
         dataDisposable = terminal.onData((data: string) => {
             if (disconnected) return;
             if (serialOpts) { serialOnData(data); return; }
+
+            // 目录同步器处理输入
+            if (cwdSync && isSsh) {
+                cwdSync.handleInput(data);
+            }
+
             invoke(writeCmd, { sessionId: sid, data: Array.from(new TextEncoder().encode(processInput(data))) });
         });
         resizeDisposable = terminal.onResize(({ cols, rows }) => {
@@ -746,9 +754,12 @@
         unlisteners = [];
         disconnected = false;
         sessionId = null;
-        cwdHookInstalledFor = null;
         serialHexBuf = "";
         serialLineBuf = "";
+
+        // 清理旧的目录同步器
+        cwdSync?.dispose();
+        cwdSync = undefined;
 
         if (tabType === "serial") {
             try {
@@ -820,6 +831,16 @@
             await wireSessionEvents(sessionId);
         }
 
+        // 初始化目录同步器（仅 SSH 会话）
+        if (isSsh && sessionId) {
+            cwdSync = createCwdSync({
+                enabled: app.sftpFollowCwd(),
+                onCwdChange: (cwd: string) => {
+                    app.setRemoteCwd(tabId, cwd);
+                },
+            });
+        }
+
         wireSessionInput(sessionId!);
 
         // Sync initial size
@@ -830,27 +851,18 @@
             }
         });
 
-        // 远端 shell 探测（仅 SSH）。连接成功时跑——此刻 init_command 已由后端在
-        // ssh_connect 返回前写入 PTY，探针排在其后。门控：auto_detect 开 + 该 profile
-        // 进程缓存未命中（remoteShellProbeNeeded）。命中即写 profile 缓存，供 AI 会话
-        // 启动时读初始 shell。fire-and-forget，不阻塞终端就绪；重连时缓存已命中 →
-        // needed=false，不重复刷探针。
-        if (isSsh) {
-            const sid = sessionId!;
-            void ai.remoteShellProbeNeeded(sid)
-                .then((needed) => { if (needed) return ai.probeRemoteShell(sid); })
-                .catch((e) => console.warn("[ai] connect-time shell probe skipped:", e));
-            void installRemoteCwdHook(sid);
-        }
-
         return true;
     }
 
+    // 监听目录跟随设置变化
     $effect(() => {
-        if (!isSsh || !sessionId) return;
-        app.sftpFollowCwd();
-        ai.remoteShellKind(sessionId);
-        void installRemoteCwdHook(sessionId);
+        if (cwdSync) {
+            cwdSync = createCwdSync({
+                enabled: app.sftpFollowCwd(),
+                writeCommand: cwdSync.writeCommand,
+                onCwdChange: cwdSync.onCwdChange,
+            });
+        }
     });
 
     function processInput(data: string): string {

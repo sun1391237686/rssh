@@ -4,7 +4,7 @@ const OSC_PREFIX = "\x1b]7337;cwd:";
 const OSC_SUFFIX = "\x1b\\";
 
 function posixHook(): string {
-  return [
+  const script = [
     "__rssh_emit_cwd(){ printf '\\033]7337;cwd:%s\\033\\\\' \"$PWD\"; }",
     "if [ -n \"${ZSH_VERSION-}\" ]; then",
     "  autoload -Uz add-zsh-hook 2>/dev/null || true",
@@ -16,11 +16,13 @@ function posixHook(): string {
     "  esac",
     "fi",
     "__rssh_emit_cwd",
-  ].join("; ");
+  ].join("\n");
+  // 用 tput 隐藏光标，执行脚本，清除从光标到屏幕末尾，显示光标
+  return `tput civis 2>/dev/null; eval '${script.replace(/'/g, "'\\''")}' 2>/dev/null; printf '\\033[J'; tput cnorm 2>/dev/null`;
 }
 
 function powershellHook(): string {
-  return [
+  const script = [
     "function global:__rssh_emit_cwd { [Console]::Write([char]27 + ']7337;cwd:' + (Get-Location).Path + [char]27 + '\\') }",
     "if (Test-Path Function:\\prompt) {",
     "  $script:__rssh_prev_prompt = (Get-Item Function:\\prompt).ScriptBlock",
@@ -29,7 +31,9 @@ function powershellHook(): string {
     "  function global:prompt { __rssh_emit_cwd; \"PS $($executionContext.SessionState.Path.CurrentLocation)> \" }",
     "}",
     "__rssh_emit_cwd",
-  ].join("; ");
+  ].join("\n");
+  // PowerShell: 用 & { ... } 包裹执行，清除输出
+  return `[Console]::CursorVisible = $false; & { ${script} } 2>$null; [Console]::Write([char]27 + '[J'); [Console]::CursorVisible = $true`;
 }
 
 /** Build a one-shot prompt hook that emits OSC 7337 cwd updates on every prompt.
